@@ -68,7 +68,7 @@ footer{margin-top:35px;background:var(--navy);color:#fff;text-align:center;paddi
     <h1>IMSON Product Verification</h1>
     <p>Scan the QR code on your IMSON cartridge box to view official product information.</p>
     <div class="search">
-      <input id="search" placeholder="Search cartridge code or product name..." oninput="loadProducts()">
+      <input id="search" placeholder="Enter QR code number (e.g. 255 or 101)..." oninput="loadProducts()">
       <button class="orange" onclick="loadProducts()">Search</button>
     </div>
   </div>
@@ -211,18 +211,21 @@ async function loadProducts(){
   }
 
   const q = (search.value || "").trim();
-  let query = db.from("products").select("*").order("created_at",{ascending:false});
 
-  if(q){
-    const safeQ = q.replace(/[%_,]/g,"");
-    if(safeQ){
-      query = query.or(
-        `product_code.ilike.%${safeQ}%,product_name.ilike.%${safeQ}%`
-      );
-    }
+  if(!q){
+    publicProducts.innerHTML =
+      '<div class="card muted">Enter the QR number printed on the IMSON sticker.</div>';
+    return;
   }
 
-  const {data,error} = await query;
+  // QR stickers use a numeric code such as 101 or 255.
+  const qrNumber = q.replace(/\s+/g,"");
+
+  const {data,error} = await db
+    .from("qr_products")
+    .select("*")
+    .eq("qr_code", qrNumber)
+    .maybeSingle();
 
   if(error){
     publicProducts.innerHTML =
@@ -231,48 +234,85 @@ async function loadProducts(){
   }
 
   publicProducts.innerHTML =
-    data.length
-      ? data.map(card).join("")
-      : '<div class="card muted">No product found.</div>';
+    data
+      ? verificationCard(data)
+      : '<div class="card muted">No product found for QR code <b>' + esc(qrNumber) + '</b>.</div>';
+}
+
+function verificationCard(p){
+  const qr = String(p.qr_code ?? "").trim();
+  const toner = String(p.toner_model ?? "").trim();
+  const productName =
+    toner
+      ? `IMSON ${toner} Compatible Toner Cartridge`
+      : String(p.product_name || "IMSON Toner Cartridge");
+
+  let yieldText = String(p.page_yield ?? "").trim();
+  if(!yieldText){
+    if(toner.toUpperCase() === "88A") yieldText = "1500 Pages";
+    else if(toner.toUpperCase() === "12A") yieldText = "2000 Pages";
+    else yieldText = "As specified on product packaging";
+  }
+
+  const productCode =
+    toner ? `IMSON-${toner.toUpperCase()}` :
+    String(p.product_code || p.alternate_code || `IMSON-${qr}`);
+
+  const printers = Array.isArray(p.printers)
+    ? p.printers
+    : (Array.isArray(p.printer_models) ? p.printer_models : []);
+
+  const printerHtml = printers.length
+    ? printers.map(x => `<span class="badge">${esc(x)}</span>`).join("")
+    : '<span class="muted">Not listed</span>';
+
+  return `
+  <div class="card verification-result" style="margin-bottom:16px;border:2px solid #d9f0df">
+    <div style="text-align:center;margin-bottom:18px">
+      <div style="font-size:20px;font-weight:800;color:#137333">🟢 IMSON PRODUCT VERIFIED</div>
+      <div class="verified" style="margin-top:10px">✓ Product information verified</div>
+    </div>
+
+    <h2 style="color:var(--navy);text-align:center;margin:8px 0 18px">
+      ${esc(productName)}
+    </h2>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="card" style="box-shadow:none;background:#fafbff">
+        <b>Product Code</b><br>${esc(productCode)}
+      </div>
+      <div class="card" style="box-shadow:none;background:#fafbff">
+        <b>Page Yield</b><br>${esc(yieldText)}
+      </div>
+    </div>
+
+    ${p.alternate_code ? `<p><b>Alternate Code:</b> ${esc(p.alternate_code)}</p>` : ""}
+
+    <div style="margin-top:16px">
+      <b>Compatible Printer Models</b>
+      <div style="margin-top:8px">${printerHtml}</div>
+    </div>
+
+    <div style="margin-top:22px;padding:15px;border-radius:10px;background:#fff7ed;text-align:center">
+      <b style="color:var(--orange);font-size:15px">Marketed by WIZTECH INNOVATION LLP</b><br>
+      <b style="color:var(--orange)">ISO 9001:2015 Certified</b>
+    </div>
+
+    <div style="text-align:center;margin-top:18px;color:#137333;font-weight:700">
+      ✓ Official IMSON product page
+    </div>
+  </div>`;
 }
 
 function card(p){
-  const printers = (Array.isArray(p.printer_models) ? p.printer_models : [])
-    .map(x => `<span class="badge">${esc(x)}</span>`).join("");
-
-  const url =
-    location.origin +
-    location.pathname +
-    "?product=" +
-    encodeURIComponent(p.product_code || "");
-
-  return `
-  <div class="card" style="margin-bottom:16px">
-    <div class="product">
-      <div>${p.image_url ? `<img class="product-img" src="${attr(p.image_url)}" alt="${attr(p.product_name||"IMSON Product")}">` : ""}</div>
-      <div>
-        <span class="verified">✓ Official Product Information</span>
-        <h2 style="color:var(--navy);margin-top:12px">${esc(p.product_name)}</h2>
-        <p><b>Product Code:</b> ${esc(p.product_code)}</p>
-        <p><b>Cartridge Type:</b> ${esc(p.cartridge_type||"")}</p>
-        <p><b>Page Yield:</b> ${esc(p.page_yield||"")}</p>
-        <p><b>Color:</b> ${esc(p.color||"")}</p>
-        <p>${esc(p.description||"")}</p>
-        <b>Compatible Printer Models</b>
-        <div>${printers || '<span class="muted">Not listed</span>'}</div>
-        <div class="actions">
-          <button class="orange" onclick="openQR('${js(url)}','${js(p.product_name)}')">Show QR Code</button>
-        </div>
-      </div>
-    </div>
-  </div>`;
+  return verificationCard(p);
 }
 
 async function loadAdminProducts(){
   if(!configured()) return;
 
   const {data,error} =
-    await db.from("products").select("*").order("created_at",{ascending:false});
+    await db.from("qr_products").select("*").order("id",{ascending:true});
 
   if(error){
     adminProducts.innerHTML = esc(error.message);
@@ -280,15 +320,14 @@ async function loadAdminProducts(){
   }
 
   adminProducts.innerHTML =
-    '<table><thead><tr><th>Product</th><th>Code</th><th>Actions</th></tr></thead><tbody>' +
+    '<table><thead><tr><th>QR</th><th>Product</th><th>Toner</th><th>Action</th></tr></thead><tbody>' +
     data.map(p => `
       <tr>
-        <td>${esc(p.product_name)}</td>
-        <td>${esc(p.product_code)}</td>
+        <td>${esc(p.qr_code)}</td>
+        <td>${esc(p.product_name || "IMSON Toner Cartridge")}</td>
+        <td>${esc(p.toner_model || "")}</td>
         <td>
-          <button class="light" onclick='editProduct(${JSON.stringify(p)})'>Edit</button>
-          <button class="danger" onclick="deleteProduct('${js(p.id)}')">Delete</button>
-          <button class="primary" onclick="openQR('${js(location.origin+location.pathname+'?product='+encodeURIComponent(p.product_code))}','${js(p.product_name)}')">QR</button>
+          <button class="primary" onclick="openQR('${js(location.origin+location.pathname+'?qr='+encodeURIComponent(p.qr_code))}','${js(p.product_name || 'IMSON Product')}')">QR</button>
         </td>
       </tr>`).join("") +
     '</tbody></table>';
@@ -440,21 +479,41 @@ function js(s){
 }
 
 async function openProductFromQR(){
-  const c = new URLSearchParams(location.search).get("product");
+  const params = new URLSearchParams(location.search);
+
+  // Supported QR URL formats:
+  // ?qr=255   (recommended)
+  // ?code=255
+  // ?product=255
+  const c =
+    params.get("qr") ||
+    params.get("code") ||
+    params.get("product");
+
   if(!c || !configured()) return;
 
-  const {data,error} =
-    await db.from("products").select("*").eq("product_code",c).single();
+  const qrNumber = c.trim();
+
+  const {data,error} = await db
+    .from("qr_products")
+    .select("*")
+    .eq("qr_code", qrNumber)
+    .maybeSingle();
 
   if(error){
-    console.warn("QR product lookup:",error.message);
+    publicView.innerHTML =
+      '<div class="card"><b>Verification Error:</b><br>' + esc(error.message) + '</div>';
     return;
   }
 
   if(data){
     publicView.innerHTML =
       '<div class="hero"><h1>IMSON Product Verification</h1><p>Official product information</p></div>' +
-      card(data);
+      verificationCard(data);
+  }else{
+    publicView.innerHTML =
+      '<div class="hero"><h1>IMSON Product Verification</h1><p>Official product information</p></div>' +
+      '<div class="card"><b>❌ Product Not Found</b><br>QR code: ' + esc(qrNumber) + '</div>';
   }
 }
 
